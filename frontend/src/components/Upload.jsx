@@ -193,35 +193,35 @@ function Upload({ onClose, onSuccess }) {
       },
     })
 
-    // Streaming request bodies require a secure context (HTTPS or localhost) in
-    // Chrome/Edge; over plain HTTP on any other origin, fetch() will construct the
-    // Request without error but then reject the send with "Failed to fetch". Gate
-    // on window.isSecureContext so we fall back cleanly instead of failing at send time.
-    const canStream = typeof Request !== 'undefined' && window.isSecureContext && (() => {
-      try {
-        // Feature-detect streaming request bodies (Chrome/Edge). Safari/Firefox
-        // currently don't support this and will throw or silently buffer.
-        return new Request('https://example.invalid', {
-          method: 'POST',
-          body: new ReadableStream(),
-          duplex: 'half',
-        }).headers !== undefined
-      } catch {
-        return false
-      }
-    })()
+    // Streaming request bodies require HTTP/2 or HTTP/3 (which browsers only support
+    // over HTTPS). Over plain HTTP (such as http://localhost:8081), Chromium will reject
+    // ReadableStream fetch requests with "TypeError: Failed to fetch".
+    const canStream = typeof Request !== 'undefined' &&
+      window.location.protocol === 'https:' &&
+      window.isSecureContext &&
+      (() => {
+        try {
+          // Feature-detect streaming request bodies (Chrome/Edge). Safari/Firefox
+          // currently don't support this and will throw or silently buffer.
+          return new Request('https://example.invalid', {
+            method: 'POST',
+            body: new ReadableStream(),
+            duplex: 'half',
+          }).headers !== undefined
+        } catch {
+          return false
+        }
+      })()
 
-    let res
+    let data
+    let uploaded = false
+
     if (canStream) {
       // Keep the estimate advancing (based on elapsed time) even after local
-      // reads finish and stop producing reportProgress calls -- otherwise the
-      // bar would freeze at whatever percent it reached when the disk read
-      // completed, which is exactly the "looks done but isn't" problem. Only
-      // meaningful for the streaming path; the buffered fallback below
-      // already jumps straight to 100% once the browser has the full body.
+      // reads finish and stop producing reportProgress calls
       const progressTicker = setInterval(updateDisplayedProgress, 250)
       try {
-        res = await fetch(`${API_BASE}/upload`, {
+        const res = await fetch(`${API_BASE}/upload`, {
           method: 'POST',
           credentials: 'include',
           headers: {
@@ -230,30 +230,39 @@ function Upload({ onClose, onSuccess }) {
           body: combined,
           duplex: 'half',
         })
+        if (res.ok) {
+          data = await res.json()
+          if (data && data.success) {
+            uploaded = true
+            setUploadProgress(100)
+          }
+        }
+      } catch (streamErr) {
+        console.warn('Streaming upload failed, falling back to standard upload:', streamErr)
       } finally {
         clearInterval(progressTicker)
       }
-      // fetch() only resolves once the server has fully received the
-      // request, so this is the first point we can honestly report 100%.
-      setUploadProgress(100)
-    } else {
-      // Fallback for browsers without streaming request body support.
-      // This still buffers in-memory (same limitation as before) but keeps
-      // uploads working everywhere.
+    }
+
+    if (!uploaded) {
+      // Standard FormData upload with real progress tracking via axios.
+      // Works reliably across all protocols (HTTP/1.1, HTTP/2, localhost, plain HTTP).
       const formData = new FormData()
       formData.append('file', file)
-      res = await fetch(`${API_BASE}/upload`, {
-        method: 'POST',
-        credentials: 'include',
-        body: formData,
+      const response = await axios.post(`${API_BASE}/upload`, formData, {
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total)
+            setUploadProgress(Math.min(99, percent))
+          }
+        },
       })
+      data = response.data
       setUploadProgress(100)
     }
 
-    const data = await res.json()
-
-    if (!res.ok || !data.success) {
-      throw new Error(data.error || 'Upload failed')
+    if (!data || !data.success) {
+      throw new Error(data?.error || 'Upload failed')
     }
 
     // File uploaded successfully, move to step 2
@@ -266,17 +275,24 @@ function Upload({ onClose, onSuccess }) {
 
   const waitForProcessingComplete = () => {
     return new Promise((resolve, reject) => {
+      let noUploadRetries = 0
       const checkProgress = setInterval(async () => {
         try {
           const response = await axios.get(`${API_BASE}/progress`)
           const data = response.data
 
           if (!data || data.status === 'no_upload') {
-            clearInterval(checkProgress)
-            // Reject instead of resolve so the error is caught by handleUpload
-            reject(new Error('Processing status unavailable'))
+            noUploadRetries++
+            // Allow a short grace period (up to 10 polls = 5 seconds) right after upload
+            // before declaring no upload in progress, in case the background worker is just starting
+            if (noUploadRetries > 10) {
+              clearInterval(checkProgress)
+              reject(new Error('Processing status unavailable'))
+            }
             return
           }
+
+          noUploadRetries = 0
 
           setProgress(data)
 
