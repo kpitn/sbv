@@ -22,6 +22,8 @@ function MessageThread({ conversation, startDate, endDate, messageLimit }) {
   const [highlightedMessageId, setHighlightedMessageId] = useState(null)
   const [isPreprintingMedia, setIsPreprintingMedia] = useState(false)
   const [showMediaOnly, setShowMediaOnly] = useState(false)
+  const [isSelectionMode, setIsSelectionMode] = useState(false)
+  const [selectedKeys, setSelectedKeys] = useState(new Set())
   const messageRefs = useRef({})
   const printTriggeredRef = useRef(false)
   const scrollContainerRef = useRef(null)
@@ -34,6 +36,8 @@ function MessageThread({ conversation, startDate, endDate, messageLimit }) {
       setTailOffset(0)
       setTotalCount(0)
       setItems([])
+      setIsSelectionMode(false)
+      setSelectedKeys(new Set())
       fetchItems()
       setShowMediaOnly(false)
     } else {
@@ -41,6 +45,8 @@ function MessageThread({ conversation, startDate, endDate, messageLimit }) {
       setOffset(0)
       setTailOffset(0)
       setTotalCount(0)
+      setIsSelectionMode(false)
+      setSelectedKeys(new Set())
     }
   }, [conversation, startDate, endDate, messageLimit])
 
@@ -380,11 +386,87 @@ function MessageThread({ conversation, startDate, endDate, messageLimit }) {
     }
   }
 
+  const getItemKey = (item) => {
+    if (item.type === 'call' && item.call) return `call-${item.call.id}`
+    const msg = item.message || item
+    return msg?.id != null ? `msg-${msg.id}` : (item.id != null ? `msg-${item.id}` : null)
+  }
+
+  const toggleSelectItem = (key) => {
+    if (!key) return
+    setSelectedKeys(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) {
+        next.delete(key)
+      } else {
+        next.add(key)
+      }
+      return next
+    })
+    if (!isSelectionMode) {
+      setIsSelectionMode(true)
+    }
+  }
+
+  const handleSelectAll = () => {
+    const allKeys = new Set()
+    items.forEach(item => {
+      const key = getItemKey(item)
+      if (key) allKeys.add(key)
+    })
+    setSelectedKeys(allKeys)
+  }
+
+  const handleDeselectAll = () => {
+    setSelectedKeys(new Set())
+  }
+
+  const handleToggleSelectMode = () => {
+    if (isSelectionMode) {
+      setIsSelectionMode(false)
+      setSelectedKeys(new Set())
+    } else {
+      setIsSelectionMode(true)
+    }
+  }
+
   const handleExportPDF = () => {
     // Build URL parameters for print view
     const params = new URLSearchParams()
     if (startDate) params.set('start', startDate.toISOString())
     if (endDate) params.set('end', endDate.toISOString())
+
+    const storageKeyItems = `print_selected_items_${conversation.address}`
+    const storageKeyKeys = `print_selected_keys_${conversation.address}`
+
+    if (selectedKeys.size > 0) {
+      // Filter current items to only selected
+      const selectedItems = items.filter(item => {
+        const key = getItemKey(item)
+        return key && selectedKeys.has(key)
+      })
+
+      const keysArray = Array.from(selectedKeys)
+      try {
+        sessionStorage.setItem(storageKeyItems, JSON.stringify(selectedItems))
+        sessionStorage.setItem(storageKeyKeys, JSON.stringify(keysArray))
+      } catch (e) {
+        console.error('Failed to save selected items to sessionStorage:', e)
+      }
+
+      // If reasonable length, pass in URL param too
+      if (keysArray.length <= 100) {
+        params.set('ids', keysArray.join(','))
+      }
+    } else {
+      // Clear any previous selective export session data
+      try {
+        sessionStorage.removeItem(storageKeyItems)
+        sessionStorage.removeItem(storageKeyKeys)
+      } catch {
+        // ignore
+      }
+    }
 
     // Open print view in new window
     const queryString = params.toString()
@@ -621,18 +703,83 @@ function MessageThread({ conversation, startDate, endDate, messageLimit }) {
               <span className="d-none d-md-inline">{showMediaOnly ? 'Show All' : 'Photos'}</span>
             </button>
             <button
+              onClick={handleToggleSelectMode}
+              className={`btn btn-sm ${isSelectionMode ? 'btn-primary' : 'btn-outline-primary'} d-flex align-items-center gap-1`}
+              title={isSelectionMode ? "Exit selection mode" : "Select messages to print"}
+            >
+              <svg style={{width: '1rem', height: '1rem'}} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
+              </svg>
+              <span className="d-none d-md-inline">{isSelectionMode ? 'Done' : 'Select'}</span>
+            </button>
+            <button
               onClick={handleExportPDF}
-              className="btn btn-sm btn-outline-primary d-flex align-items-center gap-1"
-              title="Export as PDF"
+              className={`btn btn-sm ${selectedKeys.size > 0 ? 'btn-primary' : 'btn-outline-primary'} d-flex align-items-center gap-1`}
+              title={selectedKeys.size > 0 ? `Export ${selectedKeys.size} selected items to PDF` : "Export as PDF"}
             >
               <svg style={{width: '1rem', height: '1rem'}} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
               </svg>
-              <span className="d-none d-md-inline">Export PDF</span>
+              <span className="d-none d-md-inline">
+                {selectedKeys.size > 0 ? `Export PDF (${selectedKeys.size})` : 'Export PDF'}
+              </span>
             </button>
           </div>
         </div>
       </div>
+
+      {/* Selection Toolbar */}
+      {isSelectionMode && (
+        <div className="selection-toolbar bg-body-tertiary border-bottom px-3 py-2 d-flex align-items-center justify-content-between">
+          <div className="d-flex align-items-center gap-3">
+            <div className="form-check mb-0 d-flex align-items-center gap-2">
+              <input
+                className="form-check-input"
+                type="checkbox"
+                id="select-all-checkbox"
+                checked={items.length > 0 && selectedKeys.size === items.length}
+                ref={(el) => {
+                  if (el) {
+                    el.indeterminate = selectedKeys.size > 0 && selectedKeys.size < items.length
+                  }
+                }}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    handleSelectAll()
+                  } else {
+                    handleDeselectAll()
+                  }
+                }}
+              />
+              <label className="form-check-label small fw-semibold cursor-pointer user-select-none" htmlFor="select-all-checkbox">
+                Select All ({items.length})
+              </label>
+            </div>
+            <span className="badge bg-primary" style={{ fontSize: '0.75rem' }}>
+              {selectedKeys.size} selected
+            </span>
+          </div>
+          <div className="d-flex align-items-center gap-2">
+            <button
+              onClick={handleExportPDF}
+              disabled={selectedKeys.size === 0}
+              className="btn btn-sm btn-primary d-flex align-items-center gap-1"
+              title="Print selected messages to PDF"
+            >
+              <svg style={{ width: '1rem', height: '1rem' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+              </svg>
+              <span>Print Selected ({selectedKeys.size})</span>
+            </button>
+            <button
+              onClick={handleToggleSelectMode}
+              className="btn btn-sm btn-outline-secondary"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Content */}
       <div ref={scrollContainerRef} className="flex-fill overflow-auto p-2 p-md-4 bg-body-secondary">
@@ -711,9 +858,31 @@ function MessageThread({ conversation, startDate, endDate, messageLimit }) {
               if (isCall && call) {
                 // Compact call representation - inline with messages
                 const typeInfo = getCallTypeInfo(call.type)
+                const callKey = `call-${call.id}`
+                const isSelected = selectedKeys.has(callKey)
                 return (
-                  <div key={`call-${call.id}`} className="d-flex justify-content-center my-1">
-                    <div className="badge bg-body-secondary text-body-emphasis border px-3 py-2 d-flex align-items-center gap-2" style={{fontSize: '0.75rem'}}>
+                  <div key={`call-${call.id}`} className="message-selectable-row d-flex justify-content-center align-items-center my-1">
+                    <div
+                      className={`message-checkbox-wrapper me-1 ${isSelectionMode ? '' : 'hover-checkbox'}`}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        type="checkbox"
+                        className="form-check-input message-checkbox-input"
+                        checked={isSelected}
+                        onChange={() => toggleSelectItem(callKey)}
+                        title="Select call"
+                      />
+                    </div>
+                    <div
+                      className={`badge bg-body-secondary text-body-emphasis border px-3 py-2 d-flex align-items-center gap-2 ${
+                        isSelectionMode ? 'cursor-pointer' : ''
+                      } ${isSelected ? 'message-bubble-selected' : ''}`}
+                      style={{fontSize: '0.75rem'}}
+                      onClick={() => {
+                        if (isSelectionMode) toggleSelectItem(callKey)
+                      }}
+                    >
                       <span className={typeInfo.color} style={{fontSize: '1rem'}}>{typeInfo.icon}</span>
                       <span className={`fw-semibold ${typeInfo.color}`}>{typeInfo.label} call</span>
                       <span className="text-muted">·</span>
@@ -735,13 +904,35 @@ function MessageThread({ conversation, startDate, endDate, messageLimit }) {
               const isSent = message.type === 2
               const isHighlighted = highlightedMessageId === String(message.id)
               const showSenderLabel = isGroupConversation && !isSent
+              const msgKey = `msg-${message.id}`
+              const isSelected = selectedKeys.has(msgKey)
 
               return (
                 <div
                   key={message.id}
-                  className={`d-flex ${isSent ? 'justify-content-end' : 'justify-content-start'}`}
+                  className={`message-selectable-row d-flex align-items-center ${
+                    isSent ? 'justify-content-end' : 'justify-content-start'
+                  } gap-2 my-1`}
                 >
-                  <div style={message.media_type?.startsWith('audio/') ? { width: '90%' } : { maxWidth: '70%' }}>
+                  <div
+                    className={`message-checkbox-wrapper ${isSelectionMode ? '' : 'hover-checkbox'}`}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <input
+                      type="checkbox"
+                      className="form-check-input message-checkbox-input"
+                      checked={isSelected}
+                      onChange={() => toggleSelectItem(msgKey)}
+                      title="Select message"
+                    />
+                  </div>
+
+                  <div
+                    style={message.media_type?.startsWith('audio/') ? { width: '90%' } : { maxWidth: '70%' }}
+                    onClick={() => {
+                      if (isSelectionMode) toggleSelectItem(msgKey)
+                    }}
+                  >
                     {/* Sender label for received messages in group conversations */}
                     {showSenderLabel && (
                       <div className="small text-muted mb-1 ms-2" style={{ fontSize: '0.7rem' }}>
@@ -760,6 +951,10 @@ function MessageThread({ conversation, startDate, endDate, messageLimit }) {
                         isHighlighted
                           ? 'border-warning border-3'
                           : 'border-2'
+                      } ${
+                        isSelected ? 'message-bubble-selected' : ''
+                      } ${
+                        isSelectionMode ? 'cursor-pointer' : ''
                       }`}
                       style={{
                         padding: '0.5em',

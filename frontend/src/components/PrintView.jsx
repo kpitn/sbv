@@ -11,6 +11,7 @@ function PrintView() {
   const [searchParams] = useSearchParams()
   const [messages, setMessages] = useState([])
   const [conversation, setConversation] = useState(null)
+  const [isSelective, setIsSelective] = useState(false)
   const [loading, setLoading] = useState(true)
   const [mediaLoaded, setMediaLoaded] = useState(false)
   const [loadedCount, setLoadedCount] = useState(0)
@@ -20,32 +21,62 @@ function PrintView() {
   useEffect(() => {
     const startDate = searchParams.get('start')
     const endDate = searchParams.get('end')
+    const idsParam = searchParams.get('ids')
 
     if (!address) {
       console.error('No address provided')
       return
     }
 
-    fetchConversation(address, startDate, endDate)
+    fetchConversation(address, startDate, endDate, idsParam)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const fetchConversation = async (address, startDate, endDate) => {
+  const fetchConversation = async (address, startDate, endDate, idsParam) => {
     try {
       setLoading(true)
-      const params = { address, type: 'conversation' }
+      const params = { address, type: 'conversation', limit: 100000 }
       if (startDate) params.start = startDate
       if (endDate) params.end = endDate
 
+      // Check for selected items in sessionStorage
+      let selectedItems = null
+      let selectedKeys = null
+
+      try {
+        const savedItemsStr = sessionStorage.getItem(`print_selected_items_${address}`)
+        if (savedItemsStr) {
+          const parsed = JSON.parse(savedItemsStr)
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            selectedItems = parsed
+          }
+        }
+        const savedKeysStr = sessionStorage.getItem(`print_selected_keys_${address}`)
+        if (savedKeysStr) {
+          const parsed = JSON.parse(savedKeysStr)
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            selectedKeys = new Set(parsed.map(String))
+          }
+        }
+      } catch (e) {
+        console.error('Error reading sessionStorage for selected print items:', e)
+      }
+
+      if (!selectedKeys && idsParam) {
+        selectedKeys = new Set(idsParam.split(',').map(s => s.trim()).filter(Boolean))
+      }
+
       // Use /messages endpoint with type=conversation to get all types (SMS, MMS, calls)
       const response = await axios.get(`${API_BASE}/messages`, { params })
-      const items = response.data || []
-
-      setMessages(items)
+      const rawData = response.data
+      const allItems = Array.isArray(rawData) ? rawData : (rawData?.items || [])
 
       // Get contact name and subject from any item in the list
-      const contactName = items.find(item => item.contact_name)?.contact_name
-      const subject = items.find(item => item.subject)?.subject
+      const contactName = allItems.find(item => item.contact_name)?.contact_name ||
+                          allItems.find(item => item.message?.contact_name)?.message?.contact_name ||
+                          allItems.find(item => item.call?.contact_name)?.call?.contact_name
+      const subject = allItems.find(item => item.subject)?.subject ||
+                      allItems.find(item => item.message?.subject)?.message?.subject
 
       setConversation({
         address,
@@ -53,8 +84,34 @@ function PrintView() {
         subject
       })
 
+      // Determine items to display
+      let itemsToDisplay = allItems
+      let selective = false
+
+      const getItemKey = (item) => {
+        if (item.type === 'call' && item.call) return `call-${item.call.id}`
+        const msg = item.message || item
+        return msg?.id != null ? `msg-${msg.id}` : (item.id != null ? `msg-${item.id}` : null)
+      }
+
+      if (selectedItems && selectedItems.length > 0) {
+        itemsToDisplay = selectedItems
+        selective = true
+      } else if (selectedKeys && selectedKeys.size > 0) {
+        itemsToDisplay = allItems.filter(item => {
+          const key = getItemKey(item)
+          const msg = item.message || item
+          const rawId = msg?.id != null ? String(msg.id) : (item.id != null ? String(item.id) : null)
+          return (key && selectedKeys.has(key)) || (rawId && selectedKeys.has(rawId))
+        })
+        selective = true
+      }
+
+      setIsSelective(selective)
+      setMessages(itemsToDisplay)
+
       // Count total media items - need to check nested message for media_type
-      const mediaCount = items.filter(item => {
+      const mediaCount = itemsToDisplay.filter(item => {
         const msg = item.message || item
         return msg.media_type
       }).length
@@ -131,7 +188,7 @@ function PrintView() {
     try {
       const date = new Date(dateString)
       return format(date, 'MMM d, yyyy h:mm a')
-    } catch (e) {
+    } catch {
       return ''
     }
   }
@@ -336,7 +393,8 @@ function PrintView() {
         <h1>Conversation with {conversation ? getDisplayName(conversation) : ''}</h1>
         <p className="print-address">{formatPhoneNumber(conversation?.address || '')}</p>
         <p className="print-meta">
-          {messages.length} items
+          {messages.length} {messages.length === 1 ? 'item' : 'items'}
+          {isSelective ? ' (selected)' : ''}
           {' • '}
           Exported on {format(new Date(), 'MMMM d, yyyy')}
         </p>

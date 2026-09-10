@@ -334,3 +334,62 @@
     overflow: visible !important;
   }
 }
+
+/* Message Selection Mode Styles */
+.selection-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+}
+
+.message-selectable-row {
+  position: relative;
+  transition: background-color 0.15s ease;
+}
+
+.message-checkbox-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.message-checkbox-input {
+  width: 1.2rem;
+  height: 1.2rem;
+  cursor: pointer;
+}
+
+/* Hover-to-reveal checkbox on desktop when not in selection mode */
+.message-selectable-row .hover-checkbox {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.message-selectable-row:hover .hover-checkbox {
+  opacity: 0.6;
+}
+
+.message-selectable-row .hover-checkbox:hover {
+  opacity: 1;
+}
+
+/* When selected, highlight message bubble */
+.message-bubble-selected {
+  outline: 2px solid #0d6efd !important;
+  outline-offset: 1px;
+}
+
+.message-bubble-selected.bg-primary {
+  outline-color: #ffffff !important;
+  box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.5) !important;
+}
+
+.cursor-pointer {
+  cursor: pointer !important;
+}
+
