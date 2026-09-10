@@ -1,4 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef } from 'react'
+import { Modal, Button, Alert } from 'react-bootstrap'
 import { useTheme } from '../contexts/ThemeContext'
 import { useLocation } from 'react-router'
 import axios from 'axios'
@@ -8,7 +9,7 @@ import MediaGrid from './MediaGrid'
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8085/api'
 
-function MessageThread({ conversation, startDate, endDate, messageLimit }) {
+function MessageThread({ conversation, startDate, endDate, messageLimit, onDeleteConversation }) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
   const location = useLocation()
@@ -24,6 +25,9 @@ function MessageThread({ conversation, startDate, endDate, messageLimit }) {
   const [showMediaOnly, setShowMediaOnly] = useState(false)
   const [isSelectionMode, setIsSelectionMode] = useState(false)
   const [selectedKeys, setSelectedKeys] = useState(new Set())
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState(null)
   const messageRefs = useRef({})
   const printTriggeredRef = useRef(false)
   const scrollContainerRef = useRef(null)
@@ -38,6 +42,9 @@ function MessageThread({ conversation, startDate, endDate, messageLimit }) {
       setItems([])
       setIsSelectionMode(false)
       setSelectedKeys(new Set())
+      setShowDeleteModal(false)
+      setDeleting(false)
+      setDeleteError(null)
       fetchItems()
       setShowMediaOnly(false)
     } else {
@@ -47,6 +54,9 @@ function MessageThread({ conversation, startDate, endDate, messageLimit }) {
       setTotalCount(0)
       setIsSelectionMode(false)
       setSelectedKeys(new Set())
+      setShowDeleteModal(false)
+      setDeleting(false)
+      setDeleteError(null)
     }
   }, [conversation, startDate, endDate, messageLimit])
 
@@ -474,6 +484,26 @@ function MessageThread({ conversation, startDate, endDate, messageLimit }) {
     window.open(printUrl, '_blank', 'width=1024,height=768')
   }
 
+  const confirmDeleteConversation = async () => {
+    if (!conversation?.address) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await axios.delete(`${API_BASE}/conversations`, {
+        params: { address: conversation.address }
+      })
+      setShowDeleteModal(false)
+      if (onDeleteConversation) {
+        onDeleteConversation(conversation.address)
+      }
+    } catch (err) {
+      console.error('Failed to delete conversation:', err)
+      setDeleteError(err.response?.data?.error || 'Failed to delete conversation. Please try again.')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   const formatTime = (date) => {
     return format(new Date(date), 'MMM d, yyyy h:mm a')
   }
@@ -723,6 +753,19 @@ function MessageThread({ conversation, startDate, endDate, messageLimit }) {
               <span className="d-none d-md-inline">
                 {selectedKeys.size > 0 ? `Export PDF (${selectedKeys.size})` : 'Export PDF'}
               </span>
+            </button>
+            <button
+              onClick={() => {
+                setDeleteError(null)
+                setShowDeleteModal(true)
+              }}
+              className="btn btn-sm btn-outline-danger d-flex align-items-center gap-1"
+              title="Delete conversation"
+            >
+              <svg style={{width: '1rem', height: '1rem'}} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              <span className="d-none d-md-inline">Delete</span>
             </button>
           </div>
         </div>
@@ -1014,6 +1057,66 @@ function MessageThread({ conversation, startDate, endDate, messageLimit }) {
           </div>
         )}
       </div>
+
+      {/* Delete Conversation Confirmation Modal */}
+      <Modal
+        show={showDeleteModal}
+        onHide={() => !deleting && setShowDeleteModal(false)}
+        centered
+        backdrop="static"
+        keyboard={!deleting}
+      >
+        <Modal.Header closeButton={!deleting}>
+          <Modal.Title className="h5 fw-bold text-danger d-flex align-items-center gap-2">
+            <svg style={{width: '1.25rem', height: '1.25rem'}} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            Delete Conversation
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {deleteError && (
+            <Alert variant="danger" dismissible onClose={() => setDeleteError(null)}>
+              {deleteError}
+            </Alert>
+          )}
+          <p className="mb-2">
+            Are you sure you want to permanently delete the conversation with <strong>{getDisplayName(conversation)}</strong>?
+          </p>
+          <p className="small text-muted mb-0">
+            This will permanently delete all {totalCount > 0 ? totalCount : items.length} {conversation?.type === 'call' ? 'call' : 'message'}{(totalCount || items.length) !== 1 ? 's' : ''}, attachments, and records for <code>{formatPhoneNumber(conversation?.address)}</code>. This action cannot be undone.
+          </p>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button
+            variant="secondary"
+            onClick={() => setShowDeleteModal(false)}
+            disabled={deleting}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            onClick={confirmDeleteConversation}
+            disabled={deleting}
+            className="d-flex align-items-center gap-1"
+          >
+            {deleting ? (
+              <>
+                <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                Deleting...
+              </>
+            ) : (
+              <>
+                <svg style={{width: '1rem', height: '1rem'}} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                Delete Conversation
+              </>
+            )}
+          </Button>
+        </Modal.Footer>
+      </Modal>
     </div>
   )
 }

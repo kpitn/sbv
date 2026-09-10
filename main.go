@@ -157,6 +157,7 @@ func main() {
 	protected.POST("/auth/change-password", internal.HandleChangePassword)
 	protected.POST("/upload", internal.HandleUpload)
 	protected.GET("/conversations", internal.HandleConversations)
+	protected.DELETE("/conversations", internal.HandleDeleteConversation)
 	protected.GET("/messages", internal.HandleMessages)
 	protected.GET("/activity", internal.HandleActivity)
 	protected.GET("/calls", internal.HandleCalls)

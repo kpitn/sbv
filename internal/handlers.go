@@ -129,6 +129,42 @@ func HandleConversations(c echo.Context) error {
 	return c.JSON(http.StatusOK, conversations)
 }
 
+func HandleDeleteConversation(c echo.Context) error {
+	userDB, err := getUserDB(c)
+	if err != nil {
+		slog.Error("Error getting user database", "error", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to get user database",
+		})
+	}
+
+	address := c.QueryParam("address")
+	if address == "" {
+		address = c.Param("address")
+	}
+	if strings.HasPrefix(address, " ") {
+		address = "+" + strings.TrimSpace(address)
+	}
+	if address == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Address parameter required",
+		})
+	}
+
+	err = DeleteConversation(userDB, address)
+	if err != nil {
+		slog.Error("Error deleting conversation", "address", address, "error", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to delete conversation",
+		})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "Conversation deleted successfully",
+	})
+}
+
 func HandleMessages(c echo.Context) error {
 	userDB, err := getUserDB(c)
 	if err != nil {

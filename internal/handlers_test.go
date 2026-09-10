@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -572,3 +573,50 @@ func TestGetUserDBHelperMissingUsername(t *testing.T) {
 		t.Errorf("Expected error about missing username, got: %v", err)
 	}
 }
+
+func TestHandleDeleteConversation(t *testing.T) {
+	_, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	testAddress := "+15551234567"
+
+	c, rec := setupTestContext(http.MethodDelete, "/api/conversations?address="+url.QueryEscape(testAddress), "")
+
+	if err := HandleDeleteConversation(c); err != nil {
+		t.Fatalf("HandleDeleteConversation failed: %v", err)
+	}
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", rec.Code)
+	}
+
+	// Verify the conversation is gone using getUserDB(c)
+	userDB, err := getUserDB(c)
+	if err != nil {
+		t.Fatalf("getUserDB failed: %v", err)
+	}
+
+	messages, err := GetMessages(userDB, testAddress, nil, nil)
+	if err != nil {
+		t.Fatalf("GetMessages failed: %v", err)
+	}
+	if len(messages) != 0 {
+		t.Errorf("Expected 0 messages after delete, got %d", len(messages))
+	}
+}
+
+func TestHandleDeleteConversationWithoutAddress(t *testing.T) {
+	_, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	c, rec := setupTestContext(http.MethodDelete, "/api/conversations", "")
+
+	if err := HandleDeleteConversation(c); err != nil {
+		t.Fatalf("HandleDeleteConversation failed: %v", err)
+	}
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d", rec.Code)
+	}
+}
+

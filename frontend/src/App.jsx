@@ -162,6 +162,13 @@ function App() {
     }
   }
 
+  const handleDeleteConversation = (deletedAddress) => {
+    setConversations(prev => prev.filter(c => c.address !== deletedAddress))
+    setSelectedConversation(null)
+    navigate('/')
+    fetchDateRange()
+  }
+
   const fetchConversations = async () => {
     setConversationsLoading(true)
     try {
@@ -409,6 +416,7 @@ function App() {
                 startDate={startDate}
                 endDate={endDate}
                 messageLimit={settings.conversations.message_limit}
+                onDeleteConversation={handleDeleteConversation}
               />
             </div>
           </>

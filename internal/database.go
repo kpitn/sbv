@@ -1320,3 +1320,16 @@ func getDailyTrend(userDB *sql.DB, dateFilter string, args []interface{}) ([]Dai
 	}
 	return trend, nil
 }
+
+// DeleteConversation deletes all messages and calls for a given address
+func DeleteConversation(userDB *sql.DB, address string) error {
+	unlock := LockForWrite(userDB)
+	defer unlock()
+
+	_, err := userDB.Exec("DELETE FROM messages WHERE address = ?", address)
+	if err != nil {
+		return fmt.Errorf("failed to delete conversation: %w", err)
+	}
+	return nil
+}
+
